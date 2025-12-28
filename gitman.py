@@ -1,0 +1,1007 @@
+#!/usr/bin/env python3
+"""
+Git Account Manager - CLI Tool
+Manage multiple GitHub accounts with ease
+"""
+
+import os
+import sys
+import subprocess
+import json
+from pathlib import Path
+from typing import Optional, Dict, List
+
+# Platform-specific imports
+if sys.platform == 'win32':
+    import msvcrt
+else:
+    import tty
+    import termios
+
+# ANSI Colors
+class Colors:
+    HEADER = '\033[95m'
+    BLUE = '\033[94m'
+    CYAN = '\033[96m'
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    RED = '\033[91m'
+    END = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+
+CONFIG_FILE = Path.home() / '.gitmanager' / 'config.json'
+
+class GitManager:
+    def __init__(self):
+        self.config_dir = Path.home() / '.gitmanager'
+        self.config_file = self.config_dir / 'config.json'
+        self.accounts = self.load_config()
+    
+    def get_key(self):
+        """Get a single keypress - cross-platform"""
+        if sys.platform == 'win32':
+            return self._get_key_windows()
+        else:
+            return self._get_key_unix()
+    
+    def _get_key_windows(self):
+        """Get keypress on Windows"""
+        ch = msvcrt.getch()
+        
+        # Check for special keys (arrow keys, function keys, etc.)
+        if ch in (b'\x00', b'\xe0'):  # Special key prefix
+            ch = msvcrt.getch()  # Read the actual key code
+            
+            if ch == b'H':    # Up arrow
+                return 'UP'
+            elif ch == b'P':  # Down arrow
+                return 'DOWN'
+            elif ch == b'K':  # Left arrow
+                return 'LEFT'
+            elif ch == b'M':  # Right arrow
+                return 'RIGHT'
+        
+        # Regular key
+        try:
+            return ch.decode('utf-8')
+        except:
+            return ch
+    
+    def _get_key_unix(self):
+        """Get keypress on Unix/Linux/macOS"""
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            ch = sys.stdin.read(1)
+            
+            # Handle arrow keys (escape sequences)
+            if ch == '\x1b':
+                next1 = sys.stdin.read(1)
+                next2 = sys.stdin.read(1)
+                if next1 == '[':
+                    if next2 == 'A':
+                        return 'UP'
+                    elif next2 == 'B':
+                        return 'DOWN'
+                    elif next2 == 'C':
+                        return 'RIGHT'
+                    elif next2 == 'D':
+                        return 'LEFT'
+            
+            return ch
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+    
+    def load_config(self) -> Dict:
+        """Load accounts from config file"""
+        if not self.config_file.exists():
+            return {}
+        
+        try:
+            with open(self.config_file, 'r') as f:
+                return json.load(f)
+        except:
+            return {}
+    
+    def save_config(self):
+        """Save accounts to config file"""
+        self.config_dir.mkdir(exist_ok=True)
+        with open(self.config_file, 'w') as f:
+            json.dump(self.accounts, f, indent=2)
+    
+    def is_git_repo(self) -> bool:
+        """Check if current directory is a git repo"""
+        result = subprocess.run(
+            ['git', 'rev-parse', '--git-dir'],
+            capture_output=True,
+            text=True
+        )
+        return result.returncode == 0
+    
+    def get_current_identity(self) -> Optional[Dict[str, str]]:
+        """Get current git identity"""
+        if not self.is_git_repo():
+            return None
+        
+        name = subprocess.run(['git', 'config', 'user.name'], 
+                            capture_output=True, text=True).stdout.strip()
+        email = subprocess.run(['git', 'config', 'user.email'], 
+                             capture_output=True, text=True).stdout.strip()
+        remote = subprocess.run(['git', 'remote', 'get-url', 'origin'], 
+                              capture_output=True, text=True).stdout.strip()
+        
+        return {
+            'name': name or 'Not set',
+            'email': email or 'Not set',
+            'remote': remote or 'Not set'
+        }
+    
+    def find_current_account(self) -> Optional[str]:
+        """Find which account matches current identity"""
+        if not self.is_git_repo():
+            return None
+        
+        identity = self.get_current_identity()
+        
+        for account_name, account in self.accounts.items():
+            if identity['email'] == account['email']:
+                return account_name
+        
+        return None
+    
+    def switch_account(self, account_name: str) -> bool:
+        """Switch to specified account"""
+        if account_name not in self.accounts:
+            print(f"{Colors.RED}❌ Account '{account_name}' not found{Colors.END}")
+            return False
+        
+        if not self.is_git_repo():
+            print(f"{Colors.RED}❌ Not in a git repository{Colors.END}")
+            return False
+        
+        account = self.accounts[account_name]
+        
+        # Set git config
+        subprocess.run(['git', 'config', 'user.name', account['name']])
+        subprocess.run(['git', 'config', 'user.email', account['email']])
+        
+        # Fix remote URL if needed
+        self.fix_remote_url(account['host'])
+        
+        print(f"\n{Colors.GREEN}✓ Switched to {account_name} account{Colors.END}")
+        print(f"  Name:  {account['name']}")
+        print(f"  Email: {account['email']}\n")
+        
+        return True
+    
+    def fix_remote_url(self, host: str):
+        """Update remote URL to use correct SSH host"""
+        result = subprocess.run(['git', 'remote', 'get-url', 'origin'],
+                              capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            return
+        
+        current_url = result.stdout.strip()
+        
+        if host in current_url:
+            print(f"{Colors.CYAN}✓ Remote URL already correct{Colors.END}")
+            return
+        
+        # Extract repo path
+        if 'github.com' in current_url:
+            parts = current_url.split(':')[-1].replace('.git', '')
+            new_url = f"git@{host}:{parts}.git"
+            
+            subprocess.run(['git', 'remote', 'set-url', 'origin', new_url])
+            print(f"{Colors.CYAN}✓ Remote URL updated to: {new_url}{Colors.END}")
+    
+    def add_account(self):
+        """Add a new account interactively"""
+        print(f"\n{Colors.BOLD}Add New Account{Colors.END}")
+        print("━" * 50)
+        
+        name = input("Account name (e.g., personal, work): ").strip()
+        if name in self.accounts:
+            print(f"{Colors.RED}❌ Account already exists{Colors.END}")
+            return
+        
+        display_name = input("Display name (for commits): ").strip()
+        email = input("Email: ").strip()
+        username = input("GitHub username: ").strip()
+        
+        # Check if user wants automatic SSH setup
+        print(f"\n{Colors.BOLD}SSH Setup:{Colors.END}")
+        print(f"  1. Use existing SSH key/config (I'll set it up manually)")
+        print(f"  2. Auto-generate SSH key and config (recommended)")
+        
+        setup_choice = input(f"\n{Colors.CYAN}Select option (1-2): {Colors.END}").strip()
+        
+        if setup_choice == '2':
+            # Full SSH setup
+            ssh_host = f"github.com-{name}"
+            ssh_key_path = Path.home() / '.ssh' / f'id_ed25519_{name}'
+            
+            print(f"\n{Colors.BOLD}Generating SSH setup...{Colors.END}")
+            
+            # Check for existing SSH key
+            if ssh_key_path.exists():
+                print(f"{Colors.YELLOW}⚠ SSH key already exists at {ssh_key_path}{Colors.END}")
+                print(f"\n{Colors.BOLD}Options:{Colors.END}")
+                print(f"  1. Use existing key")
+                print(f"  2. Overwrite with new key")
+                print(f"  3. Cancel")
+                
+                key_choice = input(f"\n{Colors.CYAN}Select option (1-3): {Colors.END}").strip()
+                
+                if key_choice == '1':
+                    print(f"{Colors.GREEN}✓ Using existing key{Colors.END}")
+                elif key_choice == '2':
+                    print(f"{Colors.YELLOW}⚠ This will permanently delete the old key!{Colors.END}")
+                    confirm = input(f"{Colors.RED}Type 'overwrite' to confirm: {Colors.END}").strip()
+                    if confirm == 'overwrite':
+                        ssh_key_path.unlink()
+                        Path(str(ssh_key_path) + '.pub').unlink(missing_ok=True)
+                        self._generate_ssh_key(email, ssh_key_path)
+                    else:
+                        print(f"{Colors.YELLOW}Cancelled{Colors.END}")
+                        return
+                else:
+                    print(f"{Colors.YELLOW}Cancelled{Colors.END}")
+                    return
+            else:
+                self._generate_ssh_key(email, ssh_key_path)
+            
+            # Setup SSH config
+            self._setup_ssh_config(ssh_host, ssh_key_path, name)
+            
+            # Add to ssh-agent
+            self._add_to_ssh_agent(ssh_key_path)
+            
+            # Show public key
+            pub_key_path = Path(str(ssh_key_path) + '.pub')
+            if pub_key_path.exists():
+                with open(pub_key_path, 'r') as f:
+                    pub_key = f.read().strip()
+                
+                print(f"\n{Colors.CYAN}Copy this public key to GitHub:{Colors.END}\n")
+                print(f"{Colors.BOLD}{pub_key}{Colors.END}\n")
+                print(f"Add it at: https://github.com/settings/keys")
+            
+            # Save account
+            self.accounts[name] = {
+                'name': display_name,
+                'email': email,
+                'username': username,
+                'host': ssh_host
+            }
+            self.save_config()
+            
+            print(f"\n{Colors.GREEN}✓ Account '{name}' added with full SSH setup{Colors.END}")
+            
+        else:
+            # Manual SSH setup
+            host = input(f"SSH host (default: github.com-{name}): ").strip()
+            if not host:
+                host = f"github.com-{name}"
+            
+            # Check if SSH config exists for this host
+            ssh_config_path = Path.home() / '.ssh' / 'config'
+            config_exists = False
+            
+            if ssh_config_path.exists():
+                with open(ssh_config_path, 'r') as f:
+                    if f"Host {host}" in f.read():
+                        config_exists = True
+            
+            if not config_exists:
+                print(f"\n{Colors.YELLOW}⚠ SSH config not found for '{host}'{Colors.END}")
+                print(f"\nMake sure you have this in ~/.ssh/config:")
+                print(f"\n{Colors.CYAN}Host {host}")
+                print(f"    HostName github.com")
+                print(f"    User git")
+                print(f"    IdentityFile ~/.ssh/id_ed25519_{name}")
+                print(f"    IdentitiesOnly yes{Colors.END}\n")
+                
+                proceed = input("Continue anyway? (y/n): ").strip().lower()
+                if proceed != 'y':
+                    print(f"{Colors.YELLOW}Cancelled{Colors.END}")
+                    return
+            
+            # Save account
+            self.accounts[name] = {
+                'name': display_name,
+                'email': email,
+                'username': username,
+                'host': host
+            }
+            self.save_config()
+            
+            print(f"\n{Colors.GREEN}✓ Account '{name}' added{Colors.END}")
+            if not config_exists:
+                print(f"{Colors.YELLOW}⚠ Remember to set up SSH config manually{Colors.END}")
+    
+    def remove_account(self, name: str = None):
+        """Remove an account with arrow key selection"""
+        if not self.accounts:
+            print(f"{Colors.RED}❌ No accounts configured{Colors.END}")
+            return
+        
+        # If no name provided, show interactive selection with arrow keys
+        if name is None:
+            account_list = list(self.accounts.items())
+            selected = 0
+            
+            while True:
+                os.system('clear' if os.name == 'posix' else 'cls')
+                
+                print(f"\n{Colors.BOLD}Remove Account:{Colors.END}")
+                print("━" * 60)
+                
+                for i, (account_name, account) in enumerate(account_list):
+                    is_selected = (i == selected)
+                    
+                    if is_selected:
+                        prefix = f"  {Colors.CYAN}●{Colors.END}"
+                        line = f"{prefix} {Colors.BOLD}{Colors.CYAN}{account_name:<15}{Colors.END} {account['email']}"
+                    else:
+                        prefix = "   "
+                        line = f"{prefix} {account_name:<15} {account['email']}"
+                    
+                    print(line)
+                
+                print("━" * 60)
+                print(f"\n{Colors.YELLOW}↑/↓{Colors.END} Navigate  {Colors.YELLOW}Enter{Colors.END} Select  {Colors.YELLOW}q{Colors.END} Cancel")
+                
+                # Get keypress
+                key = self.get_key()
+                
+                if key == 'UP':
+                    selected = (selected - 1) % len(account_list)
+                elif key == 'DOWN':
+                    selected = (selected + 1) % len(account_list)
+                elif key == '\r' or key == '\n':  # Enter
+                    name = account_list[selected][0]
+                    break
+                elif key == 'q' or key == '\x03':  # q or Ctrl+C
+                    os.system('clear' if os.name == 'posix' else 'cls')
+                    print(f"{Colors.YELLOW}Cancelled{Colors.END}")
+                    return
+        
+        if name not in self.accounts:
+            print(f"{Colors.RED}❌ Account '{name}' not found{Colors.END}")
+            return
+        
+        account = self.accounts[name]
+        
+        os.system('clear' if os.name == 'posix' else 'cls')
+        
+        print(f"\n{Colors.BOLD}Remove account '{name}'?{Colors.END}")
+        print(f"  Name:  {account['name']}")
+        print(f"  Email: {account['email']}")
+        
+        # Ask what to remove with arrow key selection
+        options = [
+            ("Only remove from gitman (keep SSH keys)", 1),
+            ("Remove account AND SSH keys", 2),
+            ("Remove account, SSH keys, AND SSH config", 3)
+        ]
+        
+        selected_option = 0
+        
+        while True:
+            # Clear and redraw from "What to remove?" onwards
+            print(f"\n{Colors.BOLD}What to remove?{Colors.END}")
+            
+            for i, (desc, _) in enumerate(options):
+                is_selected = (i == selected_option)
+                
+                if is_selected:
+                    prefix = f"  {Colors.CYAN}●{Colors.END}"
+                    line = f"{prefix} {Colors.BOLD}{Colors.CYAN}{desc}{Colors.END}"
+                else:
+                    prefix = "   "
+                    line = f"{prefix} {desc}"
+                
+                print(line)
+            
+            print(f"\n{Colors.YELLOW}↑/↓{Colors.END} Navigate  {Colors.YELLOW}Enter{Colors.END} Select  {Colors.YELLOW}q{Colors.END} Cancel")
+            
+            # Get keypress
+            key = self.get_key()
+            
+            if key == 'UP':
+                selected_option = (selected_option - 1) % len(options)
+                # Clear previous output
+                for _ in range(len(options) + 3):
+                    print('\033[F\033[K', end='')
+            elif key == 'DOWN':
+                selected_option = (selected_option + 1) % len(options)
+                # Clear previous output
+                for _ in range(len(options) + 3):
+                    print('\033[F\033[K', end='')
+            elif key == '\r' or key == '\n':  # Enter
+                option = options[selected_option][1]
+                os.system('clear' if os.name == 'posix' else 'cls')
+                break
+            elif key == 'q' or key == '\x03':  # q or Ctrl+C
+                os.system('clear' if os.name == 'posix' else 'cls')
+                print(f"{Colors.YELLOW}Cancelled{Colors.END}")
+                return
+        
+        # Execute the selected option
+        if option == 1:
+            # Only remove from config
+            del self.accounts[name]
+            self.save_config()
+            print(f"\n{Colors.GREEN}✓ Account '{name}' removed from gitman{Colors.END}")
+            print(f"{Colors.YELLOW}ℹ SSH keys and config remain intact{Colors.END}")
+        
+        elif option == 2:
+            # Remove config and SSH keys
+            print(f"\n{Colors.RED}Delete SSH keys? This cannot be undone!{Colors.END}")
+            confirm = input(f"Type 'yes' to confirm: ").strip().lower()
+            
+            if confirm == 'yes':
+                self._remove_ssh_keys(account['host'], name)
+                del self.accounts[name]
+                self.save_config()
+                print(f"\n{Colors.GREEN}✓ Account and SSH keys removed{Colors.END}")
+            else:
+                print(f"{Colors.YELLOW}Cancelled{Colors.END}")
+        
+        elif option == 3:
+            # Remove everything
+            print(f"\n{Colors.RED}Delete SSH keys AND config? This cannot be undone!{Colors.END}")
+            confirm = input(f"Type 'yes' to confirm: ").strip().lower()
+            
+            if confirm == 'yes':
+                self._remove_ssh_keys(account['host'], name)
+                self._remove_ssh_config_entry(account['host'])
+                del self.accounts[name]
+                self.save_config()
+                print(f"\n{Colors.GREEN}✓ Account, SSH keys, and config removed{Colors.END}")
+            else:
+                print(f"{Colors.YELLOW}Cancelled{Colors.END}")
+    
+    def _remove_ssh_keys(self, ssh_host: str, account_name: str):
+        """Remove SSH keys for an account"""
+        ssh_key_path = Path.home() / '.ssh' / f'id_ed25519_{account_name}'
+        pub_key_path = Path(str(ssh_key_path) + '.pub')
+        
+        removed = []
+        
+        if ssh_key_path.exists():
+            try:
+                ssh_key_path.unlink()
+                removed.append(str(ssh_key_path))
+            except Exception as e:
+                print(f"{Colors.RED}✗ Could not remove {ssh_key_path}: {e}{Colors.END}")
+        
+        if pub_key_path.exists():
+            try:
+                pub_key_path.unlink()
+                removed.append(str(pub_key_path))
+            except Exception as e:
+                print(f"{Colors.RED}✗ Could not remove {pub_key_path}: {e}{Colors.END}")
+        
+        if removed:
+            print(f"{Colors.GREEN}✓ Removed SSH keys:{Colors.END}")
+            for path in removed:
+                print(f"  - {path}")
+    
+    def _remove_ssh_config_entry(self, ssh_host: str):
+        """Remove entry from SSH config"""
+        ssh_config_path = Path.home() / '.ssh' / 'config'
+        
+        if not ssh_config_path.exists():
+            return
+        
+        try:
+            with open(ssh_config_path, 'r') as f:
+                lines = f.readlines()
+            
+            # Find and remove the host block
+            new_lines = []
+            skip_block = False
+            
+            for line in lines:
+                if line.strip().startswith(f"Host {ssh_host}"):
+                    skip_block = True
+                    continue
+                
+                # Stop skipping when we hit the next Host or empty line after block
+                if skip_block:
+                    if line.strip().startswith("Host ") or (line.strip() == "" and new_lines and new_lines[-1].strip() != ""):
+                        skip_block = False
+                    else:
+                        continue
+                
+                new_lines.append(line)
+            
+            # Write back
+            with open(ssh_config_path, 'w') as f:
+                f.writelines(new_lines)
+            
+            print(f"{Colors.GREEN}✓ Removed SSH config entry for {ssh_host}{Colors.END}")
+        
+        except Exception as e:
+            print(f"{Colors.RED}✗ Could not update SSH config: {e}{Colors.END}")
+    
+    def list_accounts(self):
+        """List all configured accounts"""
+        if not self.accounts:
+            print(f"{Colors.YELLOW}No accounts configured{Colors.END}")
+            print("Run: gitman add")
+            return
+        
+        print(f"\n{Colors.BOLD}Configured Accounts:{Colors.END}")
+        print("━" * 60)
+        
+        current_account = self.find_current_account()
+        
+        for i, (name, account) in enumerate(self.accounts.items(), 1):
+            prefix = f"{Colors.GREEN}→{Colors.END}" if name == current_account else " "
+            print(f"\n{prefix} {Colors.CYAN}{i}. {name}{Colors.END}")
+            print(f"     Name:     {account['name']}")
+            print(f"     Email:    {account['email']}")
+            print(f"     Username: {account['username']}")
+            print(f"     Host:     {account['host']}")
+        
+        if current_account:
+            print(f"\n{Colors.GREEN}→ Currently active account{Colors.END}")
+        print()
+    
+    def show_status(self):
+        """Show current git identity"""
+        if not self.is_git_repo():
+            print(f"{Colors.RED}❌ Not in a git repository{Colors.END}")
+            return
+        
+        identity = self.get_current_identity()
+        current_account = self.find_current_account()
+        
+        print(f"\n{Colors.BOLD}Current Git Identity:{Colors.END}")
+        print("━" * 60)
+        
+        if current_account:
+            print(f"  Account: {Colors.GREEN}{current_account}{Colors.END}")
+        
+        print(f"  Name:    {identity['name']}")
+        print(f"  Email:   {identity['email']}")
+        print(f"\n{Colors.BOLD}Remote URL:{Colors.END}")
+        print(f"  {identity['remote']}")
+        print("━" * 60 + "\n")
+    
+    def quick_switch(self):
+        """Quick switch with arrow key navigation"""
+        if not self.accounts:
+            print(f"{Colors.RED}❌ No accounts configured{Colors.END}")
+            print("Run: gitman add")
+            return
+        
+        if not self.is_git_repo():
+            print(f"{Colors.RED}❌ Not in a git repository{Colors.END}")
+            return
+        
+        current_account = self.find_current_account()
+        account_list = list(self.accounts.items())
+        
+        # Find current account index or default to 0
+        selected = 0
+        for i, (name, _) in enumerate(account_list):
+            if name == current_account:
+                selected = i
+                break
+        
+        while True:
+            # Clear screen and redraw
+            os.system('clear' if os.name == 'posix' else 'cls')
+            
+            print(f"\n{Colors.BOLD}Select Account:{Colors.END}")
+            print("━" * 60)
+            
+            for i, (name, account) in enumerate(account_list):
+                is_current = (name == current_account)
+                is_selected = (i == selected)
+                
+                # Build prefix
+                if is_current and is_selected:
+                    prefix = f"{Colors.GREEN}→ ●{Colors.END}"
+                elif is_current:
+                    prefix = f"{Colors.GREEN}→  {Colors.END}"
+                elif is_selected:
+                    prefix = f"  {Colors.CYAN}●{Colors.END}"
+                else:
+                    prefix = "   "
+                
+                # Highlight selected line
+                if is_selected:
+                    line = f"{prefix} {Colors.BOLD}{Colors.CYAN}{name:<15}{Colors.END} {account['email']}"
+                else:
+                    line = f"{prefix} {name:<15} {account['email']}"
+                
+                print(line)
+            
+            print("━" * 60)
+            print(f"\n{Colors.YELLOW}↑/↓{Colors.END} Navigate  {Colors.YELLOW}Enter{Colors.END} Select  {Colors.YELLOW}q{Colors.END} Cancel")
+            
+            # Get keypress
+            key = self.get_key()
+            
+            if key == 'UP':
+                selected = (selected - 1) % len(account_list)
+            elif key == 'DOWN':
+                selected = (selected + 1) % len(account_list)
+            elif key == '\r' or key == '\n':  # Enter
+                account_name = account_list[selected][0]
+                os.system('clear' if os.name == 'posix' else 'cls')
+                self.switch_account(account_name)
+                break
+            elif key == 'q' or key == '\x03':  # q or Ctrl+C
+                os.system('clear' if os.name == 'posix' else 'cls')
+                print(f"{Colors.YELLOW}Cancelled{Colors.END}")
+                break
+    
+    def setup_wizard(self):
+        """Complete setup wizard for new users"""
+        os.system('clear' if os.name == 'posix' else 'cls')
+        
+        print(f"{Colors.BOLD}{Colors.BLUE}")
+        print("╔════════════════════════════════════════════════════════╗")
+        print("║           Git Account Manager Setup Wizard             ║")
+        print("╚════════════════════════════════════════════════════════╝")
+        print(f"{Colors.END}\n")
+        
+        print("This wizard will help you set up multiple GitHub accounts.\n")
+        
+        # Ask for account details
+        print(f"{Colors.BOLD}Account Information:{Colors.END}")
+        account_name = input("Account name (e.g., personal, work): ").strip()
+        
+        if account_name in self.accounts:
+            print(f"{Colors.RED}❌ Account already exists. Use 'gitman add' to add more accounts.{Colors.END}")
+            return
+        
+        display_name = input("Display name (for commits): ").strip()
+        email = input("Email: ").strip()
+        username = input("GitHub username: ").strip()
+        
+        ssh_host = f"github.com-{account_name}"
+        ssh_key_path = Path.home() / '.ssh' / f'id_ed25519_{account_name}'
+        
+        print(f"\n{Colors.BOLD}SSH Configuration:{Colors.END}")
+        print(f"  SSH Host: {ssh_host}")
+        print(f"  SSH Key:  {ssh_key_path}")
+        
+        confirm = input(f"\n{Colors.CYAN}Proceed with setup? (y/n): {Colors.END}").strip().lower()
+        if confirm != 'y':
+            print(f"{Colors.YELLOW}Setup cancelled{Colors.END}")
+            return
+        
+        # Step 1: Generate SSH key
+        print(f"\n{Colors.BOLD}Step 1: Generating SSH key...{Colors.END}")
+        
+        if ssh_key_path.exists():
+            print(f"{Colors.YELLOW}⚠ SSH key already exists at {ssh_key_path}{Colors.END}")
+            print(f"\n{Colors.BOLD}Options:{Colors.END}")
+            print(f"  1. Use existing key (recommended)")
+            print(f"  2. Overwrite with new key")
+            print(f"  3. Cancel setup")
+            
+            key_choice = input(f"\n{Colors.CYAN}Select option (1-3): {Colors.END}").strip()
+            
+            if key_choice == '1':
+                print(f"{Colors.GREEN}✓ Using existing key{Colors.END}")
+            elif key_choice == '2':
+                print(f"{Colors.YELLOW}⚠ This will permanently delete the old key!{Colors.END}")
+                confirm = input(f"{Colors.RED}Type 'overwrite' to confirm: {Colors.END}").strip()
+                if confirm == 'overwrite':
+                    ssh_key_path.unlink()
+                    Path(str(ssh_key_path) + '.pub').unlink(missing_ok=True)
+                    self._generate_ssh_key(email, ssh_key_path)
+                else:
+                    print(f"{Colors.YELLOW}Cancelled{Colors.END}")
+                    return
+            else:
+                print(f"{Colors.YELLOW}Setup cancelled{Colors.END}")
+                return
+        else:
+            self._generate_ssh_key(email, ssh_key_path)
+        
+        # Step 2: Configure SSH config
+        print(f"\n{Colors.BOLD}Step 2: Configuring SSH...{Colors.END}")
+        self._setup_ssh_config(ssh_host, ssh_key_path, account_name)
+        
+        # Step 3: Add to ssh-agent
+        print(f"\n{Colors.BOLD}Step 3: Adding key to ssh-agent...{Colors.END}")
+        self._add_to_ssh_agent(ssh_key_path)
+        
+        # Step 4: Save account config
+        print(f"\n{Colors.BOLD}Step 4: Saving account configuration...{Colors.END}")
+        self.accounts[account_name] = {
+            'name': display_name,
+            'email': email,
+            'username': username,
+            'host': ssh_host
+        }
+        self.save_config()
+        print(f"{Colors.GREEN}✓ Account saved{Colors.END}")
+        
+        # Step 5: Show public key
+        print(f"\n{Colors.BOLD}Step 5: Add SSH key to GitHub{Colors.END}")
+        print("━" * 60)
+        
+        pub_key_path = Path(str(ssh_key_path) + '.pub')
+        if pub_key_path.exists():
+            with open(pub_key_path, 'r') as f:
+                pub_key = f.read().strip()
+            
+            print(f"\n{Colors.CYAN}Copy this public key:{Colors.END}\n")
+            print(f"{Colors.BOLD}{pub_key}{Colors.END}\n")
+            print(f"{Colors.YELLOW}Instructions:{Colors.END}")
+            print(f"  1. Go to: https://github.com/settings/keys")
+            print(f"  2. Click 'New SSH key'")
+            print(f"  3. Title: {account_name} (or anything you want)")
+            print(f"  4. Paste the key above")
+            print(f"  5. Click 'Add SSH key'")
+        
+        # Step 6: Test connection
+        print(f"\n{Colors.BOLD}Step 6: Test SSH connection{Colors.END}")
+        print("━" * 60)
+        
+        test_now = input(f"\n{Colors.CYAN}Test connection now? (y/n): {Colors.END}").strip().lower()
+        if test_now == 'y':
+            print(f"\nTesting connection to {ssh_host}...")
+            result = subprocess.run(
+                ['ssh', '-T', f'git@{ssh_host}'],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            # SSH to GitHub always returns exit code 1 even on success
+            if 'successfully authenticated' in result.stderr.lower():
+                print(f"{Colors.GREEN}✓ Connection successful!{Colors.END}")
+                print(f"  {result.stderr.strip()}")
+            else:
+                print(f"{Colors.RED}✗ Connection failed{Colors.END}")
+                print(f"  {result.stderr.strip()}")
+                print(f"\n{Colors.YELLOW}Make sure you added the public key to GitHub first{Colors.END}")
+        
+        # Done!
+        print(f"\n{Colors.GREEN}{Colors.BOLD}✓ Setup Complete!{Colors.END}\n")
+        print(f"You can now:")
+        print(f"  • Add more accounts: {Colors.CYAN}gitman add{Colors.END}")
+        print(f"  • Switch accounts: {Colors.CYAN}gitman{Colors.END} or {Colors.CYAN}gitman switch{Colors.END}")
+        print(f"  • Clone repos: {Colors.CYAN}git clone git@{ssh_host}:{username}/repo.git{Colors.END}")
+        print()
+    
+    def _generate_ssh_key(self, email: str, key_path: Path):
+        """Generate SSH key"""
+        try:
+            # Create .ssh directory if it doesn't exist
+            key_path.parent.mkdir(mode=0o700, exist_ok=True)
+            
+            # Generate key
+            result = subprocess.run(
+                ['ssh-keygen', '-t', 'ed25519', '-C', email, '-f', str(key_path), '-N', ''],
+                capture_output=True,
+                text=True
+            )
+            
+            if result.returncode == 0:
+                print(f"{Colors.GREEN}✓ SSH key generated at {key_path}{Colors.END}")
+                # Set proper permissions
+                key_path.chmod(0o600)
+                Path(str(key_path) + '.pub').chmod(0o644)
+            else:
+                print(f"{Colors.RED}✗ Failed to generate SSH key{Colors.END}")
+                print(result.stderr)
+        except Exception as e:
+            print(f"{Colors.RED}✗ Error generating SSH key: {e}{Colors.END}")
+    
+    def _setup_ssh_config(self, ssh_host: str, key_path: Path, account_name: str):
+        """Add entry to SSH config"""
+        ssh_config_path = Path.home() / '.ssh' / 'config'
+        
+        # Create .ssh directory if it doesn't exist
+        ssh_config_path.parent.mkdir(mode=0o700, exist_ok=True)
+        
+        # Check if entry already exists
+        config_entry = f"Host {ssh_host}"
+        
+        if ssh_config_path.exists():
+            with open(ssh_config_path, 'r') as f:
+                content = f.read()
+                if config_entry in content:
+                    print(f"{Colors.YELLOW}⚠ SSH config entry already exists{Colors.END}")
+                    return
+        
+        # Add new entry
+        config_text = f"""
+# {account_name.capitalize()} GitHub Account
+Host {ssh_host}
+    HostName github.com
+    User git
+    IdentityFile {key_path}
+    IdentitiesOnly yes
+
+"""
+        
+        try:
+            with open(ssh_config_path, 'a') as f:
+                f.write(config_text)
+            
+            # Set proper permissions
+            ssh_config_path.chmod(0o600)
+            print(f"{Colors.GREEN}✓ SSH config updated at {ssh_config_path}{Colors.END}")
+        except Exception as e:
+            print(f"{Colors.RED}✗ Error updating SSH config: {e}{Colors.END}")
+    
+    def _add_to_ssh_agent(self, key_path: Path):
+        """Add SSH key to ssh-agent"""
+        try:
+            # Start ssh-agent if not running (Unix only)
+            if sys.platform != 'win32':
+                subprocess.run(['ssh-agent'], capture_output=True)
+            
+            # Add key
+            result = subprocess.run(
+                ['ssh-add', str(key_path)],
+                capture_output=True,
+                text=True
+            )
+            
+            if result.returncode == 0:
+                print(f"{Colors.GREEN}✓ Key added to ssh-agent{Colors.END}")
+            else:
+                print(f"{Colors.YELLOW}⚠ Could not add to ssh-agent (you may need to start it manually){Colors.END}")
+        except Exception as e:
+            print(f"{Colors.YELLOW}⚠ Could not add to ssh-agent: {e}{Colors.END}")
+        """Interactive TUI mode"""
+        while True:
+            os.system('clear' if os.name == 'posix' else 'cls')
+            
+            print(f"{Colors.BOLD}{Colors.BLUE}")
+            print("╔════════════════════════════════════════════════════════╗")
+            print("║           Git Account Manager v1.0                     ║")
+            print("╚════════════════════════════════════════════════════════╝")
+            print(f"{Colors.END}")
+            
+            if self.is_git_repo():
+                identity = self.get_current_identity()
+                current_account = self.find_current_account()
+                
+                print(f"{Colors.GREEN}✓ In git repository{Colors.END}")
+                if current_account:
+                    print(f"  Account: {Colors.CYAN}{current_account}{Colors.END}")
+                print(f"  Current: {identity['name']} <{identity['email']}>")
+            else:
+                print(f"{Colors.YELLOW}⚠ Not in a git repository{Colors.END}")
+            
+            print(f"\n{Colors.BOLD}Quick Actions:{Colors.END}")
+            print(f"  {Colors.CYAN}s{Colors.END}. Switch account (numbered list)")
+            print(f"  {Colors.CYAN}w{Colors.END}. Show status (who am I?)")
+            print(f"\n{Colors.BOLD}Account Management:{Colors.END}")
+            print(f"  {Colors.CYAN}l{Colors.END}. List all accounts")
+            print(f"  {Colors.CYAN}a{Colors.END}. Add account")
+            print(f"  {Colors.CYAN}r{Colors.END}. Remove account")
+            print(f"\n  {Colors.CYAN}q{Colors.END}. Exit")
+            
+            choice = input(f"\n{Colors.CYAN}Select option: {Colors.END}").strip().lower()
+            
+            if choice == 's':
+                self.quick_switch()
+                input("\nPress Enter to continue...")
+            
+            elif choice == 'w':
+                self.show_status()
+                input("Press Enter to continue...")
+            
+            elif choice == 'l':
+                self.list_accounts()
+                input("Press Enter to continue...")
+            
+            elif choice == 'a':
+                self.add_account()
+                input("Press Enter to continue...")
+            
+            elif choice == 'r':
+                self.remove_account()
+                input("\nPress Enter to continue...")
+            
+            elif choice == 'q':
+                print(f"\n{Colors.GREEN}Goodbye!{Colors.END}\n")
+                break
+
+
+def main():
+    manager = GitManager()
+    
+    if len(sys.argv) == 1:
+        # No arguments - launch quick switch if in repo, else interactive mode
+        if manager.is_git_repo() and manager.accounts:
+            manager.quick_switch()
+        else:
+            manager.interactive_mode()
+        return
+    
+    command = sys.argv[1]
+    
+    if command == 'setup':
+        manager.setup_wizard()
+    
+    elif command == 'status' or command == 'who':
+        manager.show_status()
+    
+    elif command == 'switch' or command == 's':
+        if len(sys.argv) < 3:
+            # No account specified - show numbered list
+            manager.quick_switch()
+        else:
+            # Account name provided
+            manager.switch_account(sys.argv[2])
+    
+    elif command == 'list' or command == 'ls' or command == 'l':
+        manager.list_accounts()
+    
+    elif command == 'add' or command == 'a':
+        manager.add_account()
+    
+    elif command == 'remove' or command == 'rm' or command == 'r':
+        if len(sys.argv) >= 3:
+            # Account name provided - remove directly
+            manager.remove_account(sys.argv[2])
+        else:
+            # No account name - show interactive selection
+            manager.remove_account()
+    
+    elif command == 'help' or command == '-h' or command == '--help':
+        print(f"""
+{Colors.BOLD}Git Account Manager{Colors.END}
+
+{Colors.BOLD}Usage:{Colors.END}
+  gitman setup             Complete setup wizard (first time)
+  gitman                   Quick switch (numbered list)
+  gitman status            Show current git identity
+  gitman switch            Switch with numbered list
+  gitman switch <account>  Switch to account by name
+  gitman list              List all accounts
+  gitman add               Add new account
+  gitman remove <account>  Remove account
+
+{Colors.BOLD}Aliases:{Colors.END}
+  who = status
+  ls, l = list
+  rm, r = remove
+  s = switch
+  a = add
+
+{Colors.BOLD}First Time Setup:{Colors.END}
+  gitman setup             # Complete guided setup
+  
+  This will:
+  - Generate SSH keys
+  - Configure SSH hosts
+  - Add keys to ssh-agent
+  - Show you the public key to add to GitHub
+
+{Colors.BOLD}Examples:{Colors.END}
+  gitman setup             # First time setup
+  gitman                   # Quick switch with arrows
+  gitman s                 # Same as above
+  gitman status            # Check current identity
+  gitman switch personal   # Switch by name
+  gitman add               # Add another account
+        """)
+    
+    else:
+        print(f"{Colors.RED}Unknown command: {command}{Colors.END}")
+        print("Run 'gitman help' for usage")
+
+
+if __name__ == '__main__':
+    main()
