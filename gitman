@@ -1079,7 +1079,8 @@ def main():
     
     elif command == 'restore':
         manager.restore_backup()
-    
+    elif command == 'menu' or command == 'm':
+        manager.interactive_mode()
     elif command == 'help' or command == '-h' or command == '--help':
         print(f"""
 {Colors.BOLD}Git Account Manager{Colors.END}
@@ -1087,6 +1088,7 @@ def main():
 {Colors.BOLD}Usage:{Colors.END}
   gitman setup             Complete setup wizard (first time)
   gitman                   Quick switch (arrow key selection)
+  gitman menu              Open interactive menu
   gitman status            Show current git identity
   gitman switch            Switch with arrow keys
   gitman switch <account>  Switch to account by name
@@ -1103,6 +1105,7 @@ def main():
   rm, r = remove
   s = switch
   a = add
+  m = menu
 
 {Colors.BOLD}Backup System:{Colors.END}
   • Auto-backup: Config is backed up before every change
