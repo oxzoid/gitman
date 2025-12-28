@@ -567,7 +567,135 @@ class GitManager:
                 print(f"\n{Colors.GREEN}✓ Account, SSH keys, and config removed{Colors.END}")
             else:
                 print(f"{Colors.YELLOW}Cancelled{Colors.END}")
-    
+    def edit_account(self, name: str = None):
+        """Edit an account with arrow key selection"""
+        if not self.accounts:
+            print(f"{Colors.RED}❌ No accounts configured{Colors.END}")
+            return
+        
+        # Step 1: Select account if not provided
+        if name is None:
+            account_list = list(self.accounts.items())
+            selected = 0
+            
+            while True:
+                os.system('clear' if os.name == 'posix' else 'cls')
+                
+                print(f"\n{Colors.BOLD}Edit Account:{Colors.END}")
+                print("━" * 60)
+                
+                for i, (account_name, account) in enumerate(account_list):
+                    is_selected = (i == selected)
+                    
+                    if is_selected:
+                        prefix = f"  {Colors.CYAN}●{Colors.END}"
+                        line = f"{prefix} {Colors.BOLD}{Colors.CYAN}{account_name:<15}{Colors.END} {account['email']}"
+                    else:
+                        prefix = "   "
+                        line = f"{prefix} {account_name:<15} {account['email']}"
+                    
+                    print(line)
+                
+                print("━" * 60)
+                print(f"\n{Colors.YELLOW}↑/↓{Colors.END} Navigate  {Colors.YELLOW}Enter{Colors.END} Select  {Colors.YELLOW}q{Colors.END} Cancel")
+                
+                # Get keypress
+                key = self.get_key()
+                
+                if key == 'UP':
+                    selected = (selected - 1) % len(account_list)
+                elif key == 'DOWN':
+                    selected = (selected + 1) % len(account_list)
+                elif key == '\r' or key == '\n':  # Enter
+                    name = account_list[selected][0]
+                    break
+                elif key == 'q' or key == '\x03':  # q or Ctrl+C
+                    os.system('clear' if os.name == 'posix' else 'cls')
+                    print(f"{Colors.YELLOW}Cancelled{Colors.END}")
+                    return
+        
+        if name not in self.accounts:
+            print(f"{Colors.RED}❌ Account '{name}' not found{Colors.END}")
+            return
+        
+        account = self.accounts[name]
+        
+        # Step 2: Select field to edit
+        fields = [
+            ("Display name", "name", account['name']),
+            ("Email", "email", account['email']),
+            ("GitHub username", "username", account['username'])
+        ]
+        
+        selected_field = 0
+        
+        while True:
+            os.system('clear' if os.name == 'posix' else 'cls')
+            
+            print(f"\n{Colors.BOLD}Edit '{name}' - Select field:{Colors.END}")
+            print("━" * 60)
+            
+            for i, (label, key, value) in enumerate(fields):
+                is_selected = (i == selected_field)
+                
+                if is_selected:
+                    prefix = f"  {Colors.CYAN}●{Colors.END}"
+                    line = f"{prefix} {Colors.BOLD}{Colors.CYAN}{label:<20}{Colors.END} {value}"
+                else:
+                    prefix = "   "
+                    line = f"{prefix} {label:<20} {value}"
+                
+                print(line)
+            
+            print("━" * 60)
+            print(f"\n{Colors.YELLOW}↑/↓{Colors.END} Navigate  {Colors.YELLOW}Enter{Colors.END} Select  {Colors.YELLOW}q{Colors.END} Cancel")
+            
+            # Get keypress
+            key = self.get_key()
+            
+            if key == 'UP':
+                selected_field = (selected_field - 1) % len(fields)
+            elif key == 'DOWN':
+                selected_field = (selected_field + 1) % len(fields)
+            elif key == '\r' or key == '\n':  # Enter
+                field_label, field_key, old_value = fields[selected_field]
+                break
+            elif key == 'q' or key == '\x03':  # q or Ctrl+C
+                os.system('clear' if os.name == 'posix' else 'cls')
+                print(f"{Colors.YELLOW}Cancelled{Colors.END}")
+                return
+        
+        # Step 3: Edit the selected field
+        os.system('clear' if os.name == 'posix' else 'cls')
+        
+        print(f"\n{Colors.BOLD}Edit {field_label} for '{name}':{Colors.END}")
+        print("━" * 60)
+        print(f"Current value: {Colors.CYAN}{old_value}{Colors.END}")
+        print()
+        
+        new_value = input(f"New value (press Enter to keep current): ").strip()
+        
+        if not new_value:
+            print(f"{Colors.YELLOW}No changes made{Colors.END}")
+            return
+        
+        # Update the account
+        self.accounts[name][field_key] = new_value
+        self.save_config()
+        
+        print(f"\n{Colors.GREEN}✓ Updated {field_label} for '{name}'{Colors.END}")
+        print(f"  Old: {old_value}")
+        print(f"  New: {new_value}")
+        
+        # If we're in a git repo and this is the current account, update git config
+        if self.is_git_repo() and self.find_current_account() == name:
+            if field_key == 'name':
+                subprocess.run(['git', 'config', 'user.name', new_value])
+                print(f"\n{Colors.CYAN}✓ Also updated git config in current repo{Colors.END}")
+            elif field_key == 'email':
+                subprocess.run(['git', 'config', 'user.email', new_value])
+                print(f"\n{Colors.CYAN}✓ Also updated git config in current repo{Colors.END}")
+
     def _remove_ssh_keys(self, ssh_host: str, account_name: str):
         """Remove SSH keys for an account"""
         ssh_key_path = Path.home() / '.ssh' / f'id_ed25519_{account_name}'
@@ -992,6 +1120,7 @@ Host {ssh_host}
             print(f"\n{Colors.BOLD}Account Management:{Colors.END}")
             print(f"  {Colors.CYAN}l{Colors.END}. List all accounts")
             print(f"  {Colors.CYAN}a{Colors.END}. Add account")
+            print(f"  {Colors.CYAN}e{Colors.END}. Edit account")
             print(f"  {Colors.CYAN}r{Colors.END}. Remove account")
             print(f"\n{Colors.BOLD}Backup:{Colors.END}")
             print(f"  {Colors.CYAN}b{Colors.END}. Show backup info")
@@ -1023,8 +1152,10 @@ Host {ssh_host}
             elif choice == 'b':
                 self.show_backup_info()
                 input("\nPress Enter to continue...")
-            
-            elif choice.upper() == 'R':  # Capital R for restore
+            elif choice == 'e':
+                self.edit_account()
+                input("\nPress Enter to continue...")
+            elif choice.upper() == ']':  # Capital R for restore
                 self.restore_backup()
                 input("\nPress Enter to continue...")
             
@@ -1065,7 +1196,13 @@ def main():
     
     elif command == 'add' or command == 'a':
         manager.add_account()
-    
+    elif command == 'edit' or command == 'e':
+        if len(sys.argv) >= 3:
+            # Account name provided - edit directly
+            manager.edit_account(sys.argv[2])
+        else:
+            # No account name - show interactive selection
+            manager.edit_account()
     elif command == 'remove' or command == 'rm' or command == 'r':
         if len(sys.argv) >= 3:
             # Account name provided - remove directly
@@ -1105,6 +1242,7 @@ def main():
   rm, r = remove
   s = switch
   a = add
+  e = edit
   m = menu
 
 {Colors.BOLD}Backup System:{Colors.END}
