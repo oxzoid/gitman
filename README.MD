@@ -50,6 +50,7 @@ Quick Actions:
 Account Management:
   l. List all accounts
   a. Add account
+  e. Edit account
   r. Remove account
 
 Backup:
@@ -209,6 +210,8 @@ gitman remove <account>  # Remove specific account
 gitman backup            # Show backup information
 gitman restore           # Restore from backup
 gitman help              # Show help
+gitman edit              # Edit account (arrow keys)
+gitman edit <account>    # Edit specific account
 ```
 
 ### Aliases
@@ -220,6 +223,7 @@ gitman l                 # Same as 'list'
 gitman a                 # Same as 'add'
 gitman rm <account>      # Same as 'remove'
 gitman r                 # Same as 'remove'
+gitman e                 # Same as 'edit'
 ```
 
 ### Interactive Mode Shortcuts
@@ -234,6 +238,8 @@ When in the TUI (run `gitman` without arguments outside a repo):
 * `b` - Show backup info
 * `R` - Restore from backup (capital R)
 * `q` - Quit
+* `e` - Edit account
+
 
 ## 🔄 Backup System
 
