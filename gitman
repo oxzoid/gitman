@@ -8,8 +8,10 @@ import os
 import sys
 import subprocess
 import json
+import shutil
 from pathlib import Path
 from typing import Optional, Dict, List
+from datetime import datetime
 
 # Platform-specific imports
 if sys.platform == 'win32':
@@ -36,6 +38,7 @@ class GitManager:
     def __init__(self):
         self.config_dir = Path.home() / '.gitmanager'
         self.config_file = self.config_dir / 'config.json'
+        self.backup_dir = self.config_dir / 'backups'
         self.accounts = self.load_config()
     
     def get_key(self):
@@ -94,6 +97,102 @@ class GitManager:
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
     
+    def create_backup(self):
+        """Create a backup of current config"""
+        if not self.config_file.exists():
+            return
+        
+        try:
+            # Create backup directory
+            self.backup_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Keep only the last backup (single version)
+            backup_file = self.backup_dir / 'config.backup.json'
+            
+            # Copy current config to backup
+            shutil.copy2(self.config_file, backup_file)
+            
+        except Exception as e:
+            print(f"{Colors.YELLOW}⚠ Could not create backup: {e}{Colors.END}")
+    
+    def restore_backup(self):
+        """Restore from backup"""
+        backup_file = self.backup_dir / 'config.backup.json'
+        
+        if not backup_file.exists():
+            print(f"{Colors.RED}❌ No backup found{Colors.END}")
+            return False
+        
+        try:
+            # Show what's in the backup
+            with open(backup_file, 'r') as f:
+                backup_accounts = json.load(f)
+            
+            print(f"\n{Colors.BOLD}Backup contains {len(backup_accounts)} account(s):{Colors.END}")
+            for name, account in backup_accounts.items():
+                print(f"  • {name} ({account['email']})")
+            
+            print(f"\n{Colors.BOLD}Current config has {len(self.accounts)} account(s):{Colors.END}")
+            for name, account in self.accounts.items():
+                print(f"  • {name} ({account['email']})")
+            
+            confirm = input(f"\n{Colors.YELLOW}Restore from backup? This will overwrite current config (y/n): {Colors.END}").strip().lower()
+            
+            if confirm != 'y':
+                print(f"{Colors.YELLOW}Cancelled{Colors.END}")
+                return False
+            
+            # Backup current before restoring (just in case)
+            temp_backup = self.backup_dir / 'config.temp.json'
+            if self.config_file.exists():
+                shutil.copy2(self.config_file, temp_backup)
+            
+            # Restore
+            shutil.copy2(backup_file, self.config_file)
+            
+            # Reload
+            self.accounts = self.load_config()
+            
+            print(f"{Colors.GREEN}✓ Backup restored successfully{Colors.END}")
+            print(f"{Colors.CYAN}ℹ Your previous config was saved to: {temp_backup}{Colors.END}")
+            
+            return True
+            
+        except Exception as e:
+            print(f"{Colors.RED}✗ Error restoring backup: {e}{Colors.END}")
+            return False
+    
+    def show_backup_info(self):
+        """Show backup information"""
+        backup_file = self.backup_dir / 'config.backup.json'
+        
+        if not backup_file.exists():
+            print(f"{Colors.YELLOW}No backup found{Colors.END}")
+            return
+        
+        try:
+            # Get backup modification time
+            mtime = datetime.fromtimestamp(backup_file.stat().st_mtime)
+            
+            # Load backup content
+            with open(backup_file, 'r') as f:
+                backup_accounts = json.load(f)
+            
+            print(f"\n{Colors.BOLD}Backup Information:{Colors.END}")
+            print("━" * 60)
+            print(f"  Location: {backup_file}")
+            print(f"  Created:  {mtime.strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"  Accounts: {len(backup_accounts)}")
+            
+            print(f"\n{Colors.BOLD}Backed up accounts:{Colors.END}")
+            for name, account in backup_accounts.items():
+                print(f"  • {name:<15} {account['email']}")
+            
+            print()
+            
+        except Exception as e:
+            print(f"{Colors.RED}✗ Error reading backup: {e}{Colors.END}")
+    
     def load_config(self) -> Dict:
         """Load accounts from config file"""
         if not self.config_file.exists():
@@ -107,6 +206,9 @@ class GitManager:
     
     def save_config(self):
         """Save accounts to config file"""
+        # Create backup before saving
+        self.create_backup()
+        
         self.config_dir.mkdir(exist_ok=True)
         with open(self.config_file, 'w') as f:
             json.dump(self.accounts, f, indent=2)
@@ -861,6 +963,8 @@ Host {ssh_host}
                 print(f"{Colors.YELLOW}⚠ Could not add to ssh-agent (you may need to start it manually){Colors.END}")
         except Exception as e:
             print(f"{Colors.YELLOW}⚠ Could not add to ssh-agent: {e}{Colors.END}")
+    
+    def interactive_mode(self):
         """Interactive TUI mode"""
         while True:
             os.system('clear' if os.name == 'posix' else 'cls')
@@ -883,12 +987,15 @@ Host {ssh_host}
                 print(f"{Colors.YELLOW}⚠ Not in a git repository{Colors.END}")
             
             print(f"\n{Colors.BOLD}Quick Actions:{Colors.END}")
-            print(f"  {Colors.CYAN}s{Colors.END}. Switch account (numbered list)")
+            print(f"  {Colors.CYAN}s{Colors.END}. Switch account (arrow key selection)")
             print(f"  {Colors.CYAN}w{Colors.END}. Show status (who am I?)")
             print(f"\n{Colors.BOLD}Account Management:{Colors.END}")
             print(f"  {Colors.CYAN}l{Colors.END}. List all accounts")
             print(f"  {Colors.CYAN}a{Colors.END}. Add account")
             print(f"  {Colors.CYAN}r{Colors.END}. Remove account")
+            print(f"\n{Colors.BOLD}Backup:{Colors.END}")
+            print(f"  {Colors.CYAN}b{Colors.END}. Show backup info")
+            print(f"  {Colors.CYAN}R{Colors.END}. Restore from backup")
             print(f"\n  {Colors.CYAN}q{Colors.END}. Exit")
             
             choice = input(f"\n{Colors.CYAN}Select option: {Colors.END}").strip().lower()
@@ -911,6 +1018,14 @@ Host {ssh_host}
             
             elif choice == 'r':
                 self.remove_account()
+                input("\nPress Enter to continue...")
+            
+            elif choice == 'b':
+                self.show_backup_info()
+                input("\nPress Enter to continue...")
+            
+            elif choice.upper() == 'R':  # Capital R for restore
+                self.restore_backup()
                 input("\nPress Enter to continue...")
             
             elif choice == 'q':
@@ -939,7 +1054,7 @@ def main():
     
     elif command == 'switch' or command == 's':
         if len(sys.argv) < 3:
-            # No account specified - show numbered list
+            # No account specified - show arrow key selection
             manager.quick_switch()
         else:
             # Account name provided
@@ -959,19 +1074,28 @@ def main():
             # No account name - show interactive selection
             manager.remove_account()
     
+    elif command == 'backup':
+        manager.show_backup_info()
+    
+    elif command == 'restore':
+        manager.restore_backup()
+    
     elif command == 'help' or command == '-h' or command == '--help':
         print(f"""
 {Colors.BOLD}Git Account Manager{Colors.END}
 
 {Colors.BOLD}Usage:{Colors.END}
   gitman setup             Complete setup wizard (first time)
-  gitman                   Quick switch (numbered list)
+  gitman                   Quick switch (arrow key selection)
   gitman status            Show current git identity
-  gitman switch            Switch with numbered list
+  gitman switch            Switch with arrow keys
   gitman switch <account>  Switch to account by name
   gitman list              List all accounts
   gitman add               Add new account
-  gitman remove <account>  Remove account
+  gitman remove            Remove account (arrow key selection)
+  gitman remove <account>  Remove specific account
+  gitman backup            Show backup information
+  gitman restore           Restore from backup
 
 {Colors.BOLD}Aliases:{Colors.END}
   who = status
@@ -979,6 +1103,12 @@ def main():
   rm, r = remove
   s = switch
   a = add
+
+{Colors.BOLD}Backup System:{Colors.END}
+  • Auto-backup: Config is backed up before every change
+  • Single backup: Only the most recent backup is kept
+  • Restore: Safely restore with preview and confirmation
+  • Location: ~/.gitmanager/backups/
 
 {Colors.BOLD}First Time Setup:{Colors.END}
   gitman setup             # Complete guided setup
@@ -996,6 +1126,8 @@ def main():
   gitman status            # Check current identity
   gitman switch personal   # Switch by name
   gitman add               # Add another account
+  gitman backup            # Show backup info
+  gitman restore           # Restore from backup
         """)
     
     else:
