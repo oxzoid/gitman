@@ -1,8 +1,8 @@
 # Git Account Manager (gitman)
 
-A beautiful cross-platform CLI tool to manage multiple GitHub accounts on the same machine. Switch between personal, work, and client accounts effortlessly with arrow key navigation, automatic SSH key management, smart remote URL updates, and automatic backups.
+A beautiful cross-platform CLI tool to manage multiple GitHub accounts on the same machine. Switch between personal, work, and client accounts effortlessly with arrow key navigation, automatic SSH key management, smart remote URL updates, automatic backups, and **global git config switching**.
 
-[![Version](https://img.shields.io/badge/version-1.0-blue)](https://img.shields.io/badge/version-1.0-blue)
+[![Version](https://img.shields.io/badge/version-1.1-blue)](https://img.shields.io/badge/version-1.1-blue)
 [![Python](https://img.shields.io/badge/python-3.6+-green)](https://img.shields.io/badge/python-3.6+-green)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-lightgrey)](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-lightgrey)
 [![License](https://img.shields.io/badge/license-MIT-orange)](https://img.shields.io/badge/license-MIT-orange)
@@ -11,6 +11,7 @@ A beautiful cross-platform CLI tool to manage multiple GitHub accounts on the sa
 
 * 🎨 **Beautiful TUI** - Arrow key navigation, no typing needed
 * ⚡ **Fast Switching** - Change accounts in seconds
+* 🌍 **Global & Local Switching** - Switch globally (all repos) or locally (current repo)
 * 🔐 **Auto SSH Setup** - Generates keys and configures everything
 * 🔄 **Smart URL Updates** - Automatically fixes remote URLs
 * 💾 **Persistent Config** - Remembers all your accounts
@@ -23,9 +24,21 @@ A beautiful cross-platform CLI tool to manage multiple GitHub accounts on the sa
 
 ### Quick Switch (Arrow Keys)
 ```
-Select Account:
+Select Account - LOCAL switch (current repo only):
 ────────────────────────────────────────────────────────────
 → ● personal       john@personal.com
+    work           john@work.com  
+    client1        john@client1.com
+────────────────────────────────────────────────────────────
+
+↑/↓ Navigate  Enter Select  q Cancel
+```
+
+### Global Switch
+```
+Select Account - GLOBAL switch (affects all repos):
+────────────────────────────────────────────────────────────
+  ● personal       john@personal.com
     work           john@work.com  
     client1        john@client1.com
 ────────────────────────────────────────────────────────────
@@ -36,7 +49,7 @@ Select Account:
 ### Interactive TUI
 ```
 ╔════════════════════════════════════════════════════════╗
-║           Git Account Manager v1.0                     ║
+║           Git Account Manager v1.1                     ║
 ╚════════════════════════════════════════════════════════╝
 
 ✓ In git repository
@@ -186,12 +199,35 @@ gitman add
 ```
 
 ### Switch Accounts
+
+#### Local Switch (Current Repo Only)
 ```bash
 # In any git repository
 gitman
 
 # Use arrow keys to select account
-# Press Enter to switch
+# Press Enter to switch (affects current repo only)
+```
+
+#### Global Switch (All Repos)
+```bash
+# From anywhere (even outside a repo)
+gitman switch --global
+
+# Or use the short flag
+gitman s -g
+
+# Use arrow keys to select account
+# Press Enter to switch (affects all repos globally)
+```
+
+#### Direct Switch
+```bash
+# Switch current repo to personal
+gitman switch personal
+
+# Switch globally to work account
+gitman switch work --global
 ```
 
 ## 🎯 Usage
@@ -199,10 +235,12 @@ gitman
 ### Commands
 ```bash
 gitman setup             # Complete setup wizard (first time)
-gitman                   # Quick switch (arrow key selection)
+gitman                   # Quick switch (local if in repo, global if not)
 gitman status            # Show current git identity
-gitman switch            # Switch with arrow keys
-gitman switch <account>  # Switch to specific account
+gitman switch            # Switch with arrow keys (context-aware)
+gitman switch --global   # Switch globally with arrow keys
+gitman switch <account>  # Switch to specific account (local)
+gitman switch <account> --global  # Switch to specific account (global)
 gitman list              # List all accounts
 gitman add               # Add new account
 gitman remove            # Remove account (arrow keys)
@@ -218,6 +256,7 @@ gitman edit <account>    # Edit specific account
 ```bash
 gitman who               # Same as 'status'
 gitman s                 # Same as 'switch'
+gitman s -g              # Same as 'switch --global'
 gitman ls                # Same as 'list'
 gitman l                 # Same as 'list'
 gitman a                 # Same as 'add'
@@ -240,6 +279,105 @@ When in the TUI (run `gitman` without arguments outside a repo):
 * `q` - Quit
 * `e` - Edit account
 
+## 🌍 Global vs Local Switching
+
+### Local Switch (Repository-Level)
+**When:** You're in a git repository and want to change the identity for that repo only.
+```bash
+cd ~/my-project
+gitman switch personal  # Only affects this repo
+```
+
+**Result:**
+- Sets `git config user.name` and `user.email` for current repo
+- Updates remote URL to use correct SSH host
+- Other repos remain unchanged
+
+### Global Switch (System-Wide)
+**When:** You want to set your default identity for all new repos and repos without local config.
+```bash
+# From anywhere
+gitman switch work --global
+```
+
+**Result:**
+- Sets `git config --global user.name` and `user.email`
+- Affects all future repos and repos without local settings
+- Useful before cloning repos or starting new projects
+
+### Smart Context Detection
+```bash
+# Inside a repo: local switch
+cd ~/my-repo
+gitman          # → Shows "LOCAL switch (current repo only)"
+
+# Outside a repo: global switch
+cd ~
+gitman          # → Shows "GLOBAL switch (affects all repos)"
+```
+
+## 🔄 Common Workflows
+
+### Workflow 1: Clone and Work on Different Accounts
+```bash
+# Set global to work account (for cloning work repos)
+gitman switch work --global
+
+# Clone work repo (uses work SSH key and identity)
+git clone git@github.com-work:company/project.git
+cd project
+
+# Verify identity
+gitman status
+# ✓ Shows work account
+
+# Switch to personal for a quick fix in personal repo
+cd ~/personal-project
+gitman switch personal  # Local switch, doesn't affect global
+
+# Clone another work repo (still uses global work account)
+cd ~
+git clone git@github.com-work:company/another-project.git
+```
+
+### Workflow 2: Freelancer with Multiple Clients
+```bash
+# Set default to personal
+gitman switch personal --global
+
+# Working on client A's project
+cd ~/clients/clientA/project
+gitman switch clientA  # Local switch
+
+# Working on client B's project  
+cd ~/clients/clientB/project
+gitman switch clientB  # Local switch
+
+# Back to personal projects (uses global)
+cd ~/personal/my-app
+gitman status
+# ✓ Shows personal account (from global)
+```
+
+### Workflow 3: Company Developer
+```bash
+# Set global to work (default for all work)
+gitman switch work --global
+
+# All work repos automatically use work account
+git clone git@github.com-work:company/repo1.git
+git clone git@github.com-work:company/repo2.git
+git clone git@github.com-work:company/repo3.git
+
+# Quick personal contribution (local override)
+cd ~/open-source/some-library
+gitman switch personal  # Just for this repo
+
+# Back to work
+cd ~/company/repo1
+gitman status
+# ✓ Uses work account (from global)
+```
 
 ## 🔄 Backup System
 
@@ -336,30 +474,35 @@ gitman add
 # - GitHub username: johndoe-work
 # Copy the SSH key to GitHub
 
-# 4. Clone a personal project
-git clone git@github.com-personal:johndoe/my-project.git
-cd my-project
+# 4. Set global default to work (for daily work)
+gitman switch work --global
 
-# 5. Verify identity
+# 5. Clone a work project (automatically uses work account)
+git clone git@github.com-work:company/project.git
+cd project
+
+# 6. Verify identity
 gitman status
-# Shows: personal account
+# Shows: work account
 
-# 6. Switch to work project
-cd ~/work/company-project
-
-# 7. Switch account
-gitman
-# Use arrows to select 'work', press Enter
+# 7. Quick personal project
+cd ~/personal/my-app
+gitman switch personal  # Local override
 
 # 8. Verify
 gitman status
-# Shows: work account
+# Shows: personal account
 
 # 9. Commit and push
 git add .
 git commit -m "Update feature"
 git push
-# Uses work account identity!
+# Uses personal account identity!
+
+# 10. Back to work project
+cd ~/work/company-project
+gitman status
+# Shows: work account (from global)
 ```
 
 ## 🔧 Manual SSH Setup (Advanced)
@@ -432,21 +575,32 @@ Each account uses a unique SSH host alias:
 * `github.com-work` → Uses work SSH key
 * `github.com-client1` → Uses client1 SSH key
 
-### Repository-Level Git Config
+### Smart Git Config Management
 
-gitman sets `user.name` and `user.email` at the **repository level**, never touching global config:
+gitman intelligently manages git config based on context:
+
+**Local Switch (in a repo):**
 ```bash
 cd ~/my-repo
 gitman switch personal
 
-# Sets:
+# Sets (repository-level):
 # git config user.name "John Doe"
 # git config user.email "john@personal.com"
 ```
 
+**Global Switch (anywhere):**
+```bash
+gitman switch work --global
+
+# Sets (system-wide):
+# git config --global user.name "John Doe"
+# git config --global user.email "john@company.com"
+```
+
 ### Automatic Remote URL Updates
 
-When switching accounts, gitman automatically updates remote URLs:
+When switching accounts in a repo, gitman automatically updates remote URLs:
 ```bash
 # Before: git@github.com-work:user/repo.git
 gitman switch personal
@@ -462,21 +616,28 @@ This ensures pushes use the correct SSH key!
 | Feature | gitman | Manual | Git Config | Other Tools |
 | --- | --- | --- | --- | --- |
 | Visual UI | ✅ Arrow keys | ❌ CLI only | ❌ CLI only | ⚠️ Varies |
+| Global switching | ✅ Yes | ✅ Yes | ✅ Yes | ⚠️ Some |
+| Local switching | ✅ Yes | ✅ Yes | ✅ Yes | ⚠️ Some |
 | Auto SSH setup | ✅ Yes | ❌ Manual | ❌ Manual | ⚠️ Some |
 | Remote URL fix | ✅ Automatic | ❌ Manual | ❌ Manual | ⚠️ Some |
 | Auto backups | ✅ Yes | ❌ No | ❌ No | ⚠️ Some |
 | Cross-platform | ✅ Win/Mac/Linux | ✅ Yes | ✅ Yes | ⚠️ Limited |
 | Zero dependencies | ✅ Just Python | ✅ Just Git | ✅ Just Git | ❌ Need packages |
 | Account storage | ✅ Persistent | ❌ Remember | ❌ Scripts | ⚠️ Varies |
+| Context awareness | ✅ Smart detection | ❌ Manual | ❌ Manual | ⚠️ Some |
 
 ## 🐛 Troubleshooting
 
-### "Not in a git repository"
+### "Not in a git repository" when trying local switch
 
-**Solution:** Navigate to a git repository before switching accounts.
+**Solution:** Navigate to a git repository or use global switch.
 ```bash
+# Either:
 cd ~/your-project
 gitman switch personal
+
+# Or:
+gitman switch personal --global
 ```
 
 ### "Account not found"
@@ -485,6 +646,23 @@ gitman switch personal
 ```bash
 gitman list          # See available accounts
 gitman add           # Add new account
+```
+
+### Which config am I using? (Global vs Local)
+
+**Check local (current repo):**
+```bash
+git config user.email
+```
+
+**Check global (system-wide):**
+```bash
+git config --global user.email
+```
+
+**Check effective (what will be used):**
+```bash
+git config --show-origin user.email
 ```
 
 ### Remote URL Not Updating
@@ -569,6 +747,17 @@ Use descriptive account names:
 - ✅ `personal`, `work`, `freelance`, `client-acme`
 - ❌ `acc1`, `test`, `temp`
 
+### Set a Sensible Global Default
+
+Choose your most-used account as global default:
+```bash
+# If you mostly work on company projects
+gitman switch work --global
+
+# If you mostly work on personal projects
+gitman switch personal --global
+```
+
 ### Clone with Correct Host
 Always clone using the appropriate SSH host:
 ```bash
@@ -588,6 +777,14 @@ gitman status        # Quick check
 git commit -m "..."  # Now commit safely
 ```
 
+### Use Local Overrides When Needed
+
+If your global is set to work, but you need to contribute to an open-source project:
+```bash
+cd ~/open-source/some-library
+gitman switch personal  # Local override, doesn't affect other repos
+```
+
 ### Multiple Clients
 
 For freelancers with many clients:
@@ -596,6 +793,9 @@ gitman add  # client-acme
 gitman add  # client-techcorp
 gitman add  # client-startup
 # Each gets its own SSH key and config
+
+# Set a default for new projects
+gitman switch freelance --global
 ```
 
 ### Backup Your Keys
@@ -645,7 +845,21 @@ Absolutely! Add as many as you need - personal, work, clients, open source, etc.
 
 ### Will this mess up my global git config?
 
-No! gitman only sets repository-level config. Your global config remains untouched.
+Only when you explicitly use `--global` flag. Local switches only affect the current repository.
+
+### What's the difference between local and global switch?
+
+- **Local**: Changes identity for current repo only (`git config user.name`)
+- **Global**: Changes identity for all repos system-wide (`git config --global user.name`)
+
+### When should I use global vs local switch?
+
+- **Global**: Set your default identity for most projects (e.g., work account for a company developer)
+- **Local**: Override for specific repos (e.g., personal contribution to open-source while at work)
+
+### Can I switch globally while in a repo?
+
+Yes! Use `gitman switch --global` or `gitman switch <account> --global`.
 
 ### What if I already have SSH keys?
 
@@ -658,6 +872,20 @@ gitman is designed for SSH key management. For HTTPS, you'd need to use Git cred
 ### What if I accidentally delete an account?
 
 Use `gitman restore` to recover from the automatic backup created before the deletion.
+
+### How do I know which config is active?
+
+Use `gitman status` to see current identity, or:
+```bash
+# Check local
+git config user.email
+
+# Check global  
+git config --global user.email
+
+# Check effective (what will be used)
+git config --show-origin user.email
+```
 
 ---
 
