@@ -253,31 +253,37 @@ class GitManager:
         
         return None
     
-    def switch_account(self, account_name: str) -> bool:
+    def switch_account(self, account_name: str, global_switch: bool = False) -> bool:
         """Switch to specified account"""
         if account_name not in self.accounts:
             print(f"{Colors.RED}❌ Account '{account_name}' not found{Colors.END}")
             return False
         
-        if not self.is_git_repo():
-            print(f"{Colors.RED}❌ Not in a git repository{Colors.END}")
-            return False
-        
         account = self.accounts[account_name]
         
-        # Set git config
+        if global_switch or not self.is_git_repo():
+            # Global switch
+            subprocess.run(['git', 'config', '--global', 'user.name', account['name']])
+            subprocess.run(['git', 'config', '--global', 'user.email', account['email']])
+            
+            print(f"\n{Colors.GREEN}✓ Switched global git config to {account_name}{Colors.END}")
+            print(f"  Name:  {account['name']}")
+            print(f"  Email: {account['email']}")
+            print(f"\n{Colors.CYAN}ℹ This affects all new repos and repos without local config{Colors.END}\n")
+            return True
+        
+        # Local repo switch
         subprocess.run(['git', 'config', 'user.name', account['name']])
         subprocess.run(['git', 'config', 'user.email', account['email']])
         
         # Fix remote URL if needed
         self.fix_remote_url(account['host'])
         
-        print(f"\n{Colors.GREEN}✓ Switched to {account_name} account{Colors.END}")
+        print(f"\n{Colors.GREEN}✓ Switched to {account_name} account (local repo){Colors.END}")
         print(f"  Name:  {account['name']}")
         print(f"  Email: {account['email']}\n")
         
         return True
-    
     def fix_remote_url(self, host: str):
         """Update remote URL to use correct SSH host"""
         result = subprocess.run(['git', 'remote', 'get-url', 'origin'],
@@ -812,25 +818,31 @@ class GitManager:
             print("Run: gitman add")
             return
         
-        if not self.is_git_repo():
-            print(f"{Colors.RED}❌ Not in a git repository{Colors.END}")
-            return
-        
-        current_account = self.find_current_account()
+        in_repo = self.is_git_repo()
+        current_account = self.find_current_account() if in_repo else None
         account_list = list(self.accounts.items())
         
         # Find current account index or default to 0
         selected = 0
-        for i, (name, _) in enumerate(account_list):
-            if name == current_account:
-                selected = i
-                break
+        if current_account:
+            for i, (name, _) in enumerate(account_list):
+                if name == current_account:
+                    selected = i
+                    break
+        
+        # Determine switch type
+        if not in_repo:
+            switch_type = "global"
+            switch_scope = "(affects all repos)"
+        else:
+            switch_type = "local"
+            switch_scope = "(current repo only)"
         
         while True:
             # Clear screen and redraw
             os.system('clear' if os.name == 'posix' else 'cls')
             
-            print(f"\n{Colors.BOLD}Select Account:{Colors.END}")
+            print(f"\n{Colors.BOLD}Select Account - {switch_type.upper()} switch {switch_scope}:{Colors.END}")
             print("━" * 60)
             
             for i, (name, account) in enumerate(account_list):
@@ -868,13 +880,65 @@ class GitManager:
             elif key == '\r' or key == '\n':  # Enter
                 account_name = account_list[selected][0]
                 os.system('clear' if os.name == 'posix' else 'cls')
-                self.switch_account(account_name)
+                self.switch_account(account_name, global_switch=not in_repo)
                 break
             elif key == 'q' or key == '\x03':  # q or Ctrl+C
                 os.system('clear' if os.name == 'posix' else 'cls')
                 print(f"{Colors.YELLOW}Cancelled{Colors.END}")
                 break
-    
+    def quick_switch_global(self):
+        """Quick switch for global config with arrow key navigation"""
+        if not self.accounts:
+            print(f"{Colors.RED}❌ No accounts configured{Colors.END}")
+            print("Run: gitman add")
+            return
+        
+        account_list = list(self.accounts.items())
+        selected = 0
+        
+        while True:
+            # Clear screen and redraw
+            os.system('clear' if os.name == 'posix' else 'cls')
+            
+            print(f"\n{Colors.BOLD}Select Account - GLOBAL switch (affects all repos):{Colors.END}")
+            print("━" * 60)
+            
+            for i, (name, account) in enumerate(account_list):
+                is_selected = (i == selected)
+                
+                # Build prefix
+                if is_selected:
+                    prefix = f"  {Colors.CYAN}●{Colors.END}"
+                else:
+                    prefix = "   "
+                
+                # Highlight selected line
+                if is_selected:
+                    line = f"{prefix} {Colors.BOLD}{Colors.CYAN}{name:<15}{Colors.END} {account['email']}"
+                else:
+                    line = f"{prefix} {name:<15} {account['email']}"
+                
+                print(line)
+            
+            print("━" * 60)
+            print(f"\n{Colors.YELLOW}↑/↓{Colors.END} Navigate  {Colors.YELLOW}Enter{Colors.END} Select  {Colors.YELLOW}q{Colors.END} Cancel")
+            
+            # Get keypress
+            key = self.get_key()
+            
+            if key == 'UP':
+                selected = (selected - 1) % len(account_list)
+            elif key == 'DOWN':
+                selected = (selected + 1) % len(account_list)
+            elif key == '\r' or key == '\n':  # Enter
+                account_name = account_list[selected][0]
+                os.system('clear' if os.name == 'posix' else 'cls')
+                self.switch_account(account_name, global_switch=True)
+                break
+            elif key == 'q' or key == '\x03':  # q or Ctrl+C
+                os.system('clear' if os.name == 'posix' else 'cls')
+                print(f"{Colors.YELLOW}Cancelled{Colors.END}")
+                break
     def setup_wizard(self):
         """Complete setup wizard for new users"""
         os.system('clear' if os.name == 'posix' else 'cls')
@@ -1184,13 +1248,22 @@ def main():
         manager.show_status()
     
     elif command == 'switch' or command == 's':
-        if len(sys.argv) < 3:
+        global_flag = '--global' in sys.argv or '-g' in sys.argv
+        
+        # Remove flags from argv to check for account name
+        args_without_flags = [arg for arg in sys.argv[2:] if not arg.startswith('-')]
+        
+        if len(args_without_flags) == 0:
             # No account specified - show arrow key selection
-            manager.quick_switch()
+            if global_flag:
+                manager.quick_switch_global()
+            else:
+                manager.quick_switch()
         else:
             # Account name provided
-            manager.switch_account(sys.argv[2])
-    
+            account_name = args_without_flags[0]
+            manager.switch_account(account_name, global_switch=global_flag)
+
     elif command == 'list' or command == 'ls' or command == 'l':
         manager.list_accounts()
     
