@@ -789,17 +789,68 @@ class GitManager:
         if current_account:
             print(f"\n{Colors.GREEN}→ Currently active account{Colors.END}")
         print()
-    
+    def show_clone_info(self, account_name: str = None):
+        """Show how to clone repos with different accounts"""
+        if not self.accounts:
+            print(f"{Colors.RED}❌ No accounts configured{Colors.END}")
+            return
+        
+        if account_name:
+            if account_name not in self.accounts:
+                print(f"{Colors.RED}❌ Account '{account_name}' not found{Colors.END}")
+                return
+            accounts_to_show = {account_name: self.accounts[account_name]}
+        else:
+            accounts_to_show = self.accounts
+        
+        print(f"\n{Colors.BOLD}Clone URLs by Account:{Colors.END}")
+        print("━" * 70)
+        
+        for name, account in accounts_to_show.items():
+            print(f"\n{Colors.CYAN}{name}{Colors.END} ({account['email']})")
+            print(f"  Host: {account['host']}")
+            print(f"  Clone: {Colors.YELLOW}git clone git@{account['host']}:USERNAME/REPO.git{Colors.END}")
+            print(f"  Your repos: {Colors.GREEN}git clone git@{account['host']}:{account['username']}/your-repo.git{Colors.END}")
+        
+        print("\n" + "━" * 70)
+        print(f"{Colors.BOLD}Important:{Colors.END}")
+        print(f"  • Use the SSH host ({Colors.CYAN}git@HOST{Colors.END}) to determine which account is used")
+        print(f"  • Your global config is for commits, the SSH host is for authentication")
+        print()
     def show_status(self):
         """Show current git identity"""
         if not self.is_git_repo():
-            print(f"{Colors.RED}❌ Not in a git repository{Colors.END}")
+            # Show global config instead
+            name = subprocess.run(['git', 'config', '--global', 'user.name'], 
+                                capture_output=True, text=True).stdout.strip()
+            email = subprocess.run(['git', 'config', '--global', 'user.email'], 
+                                capture_output=True, text=True).stdout.strip()
+            
+            print(f"\n{Colors.BOLD}Global Git Identity:{Colors.END}")
+            print("━" * 60)
+            print(f"  Name:  {name or 'Not set'}")
+            print(f"  Email: {email or 'Not set'}")
+            
+            # Find which account matches
+            matching_account = None
+            for account_name, account in self.accounts.items():
+                if email == account['email']:
+                    matching_account = account_name
+                    break
+            
+            if matching_account:
+                print(f"  Account: {Colors.GREEN}{matching_account}{Colors.END}")
+                print(f"\n{Colors.CYAN}ℹ This is your global config (affects all repos without local config){Colors.END}")
+            else:
+                print(f"\n{Colors.YELLOW}⚠ Current global config doesn't match any saved account{Colors.END}")
+            
+            print("━" * 60 + "\n")
             return
         
         identity = self.get_current_identity()
         current_account = self.find_current_account()
         
-        print(f"\n{Colors.BOLD}Current Git Identity:{Colors.END}")
+        print(f"\n{Colors.BOLD}Current Git Identity (Local):{Colors.END}")
         print("━" * 60)
         
         if current_account:
@@ -810,7 +861,6 @@ class GitManager:
         print(f"\n{Colors.BOLD}Remote URL:{Colors.END}")
         print(f"  {identity['remote']}")
         print("━" * 60 + "\n")
-    
     def quick_switch(self):
         """Quick switch with arrow key navigation"""
         if not self.accounts:
@@ -1266,7 +1316,12 @@ def main():
 
     elif command == 'list' or command == 'ls' or command == 'l':
         manager.list_accounts()
-    
+    elif command == 'clone' or command == 'c':
+        # Show clone info
+        if len(sys.argv) >= 3:
+            manager.show_clone_info(sys.argv[2])
+        else:
+            manager.show_clone_info()
     elif command == 'add' or command == 'a':
         manager.add_account()
     elif command == 'edit' or command == 'e':
@@ -1308,6 +1363,8 @@ def main():
   gitman remove <account>  Remove specific account
   gitman backup            Show backup information
   gitman restore           Restore from backup
+  gitman clone             Show clone URLs for all accounts
+  gitman clone <account>   Show clone URL for specific account
 
 {Colors.BOLD}Aliases:{Colors.END}
   who = status
@@ -1317,6 +1374,7 @@ def main():
   a = add
   e = edit
   m = menu
+  c = clone
 
 {Colors.BOLD}Backup System:{Colors.END}
   • Auto-backup: Config is backed up before every change

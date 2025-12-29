@@ -250,6 +250,8 @@ gitman restore           # Restore from backup
 gitman help              # Show help
 gitman edit              # Edit account (arrow keys)
 gitman edit <account>    # Edit specific account
+gitman clone             Show clone URLs for all accounts
+gitman clone <account>   Show clone URL for specific account
 ```
 
 ### Aliases
@@ -263,6 +265,7 @@ gitman a                 # Same as 'add'
 gitman rm <account>      # Same as 'remove'
 gitman r                 # Same as 'remove'
 gitman e                 # Same as 'edit'
+gitman c                 #Same as 'clone
 ```
 
 ### Interactive Mode Shortcuts
