@@ -1147,6 +1147,110 @@ class GitManager:
         except Exception as e:
             print(f"{Colors.RED}✗ Error generating SSH key: {e}{Colors.END}")
     
+    def interactive_clone(self, repo_url: str):
+        """Clone a repo with interactive account selection"""
+        if not self.accounts:
+            print(f"{Colors.RED}❌ No accounts configured{Colors.END}")
+            return
+        
+        # Parse the repo URL to extract repo path
+        # Support formats:
+        # - git@github.com:user/repo.git
+        # - https://github.com/user/repo.git
+        # - github.com:user/repo.git
+        # - user/repo
+        
+        repo_path = None
+        
+        if repo_url.startswith('git@'):
+            # git@github.com:user/repo.git or git@github.com-account:user/repo.git
+            parts = repo_url.split(':')
+            if len(parts) == 2:
+                repo_path = parts[1].replace('.git', '')
+        elif repo_url.startswith('https://'):
+            # https://github.com/user/repo.git
+            repo_path = repo_url.split('github.com/')[-1].replace('.git', '')
+        elif ':' in repo_url:
+            # github.com:user/repo.git
+            repo_path = repo_url.split(':')[-1].replace('.git', '')
+        else:
+            # Assume it's just user/repo
+            repo_path = repo_url.replace('.git', '')
+        
+        if not repo_path or '/' not in repo_path:
+            print(f"{Colors.RED}❌ Invalid repo URL: {repo_url}{Colors.END}")
+            print(f"\n{Colors.BOLD}Supported formats:{Colors.END}")
+            print(f"  • git@github.com:user/repo.git")
+            print(f"  • https://github.com/user/repo.git")
+            print(f"  • user/repo")
+            return
+        
+        # Show account selection
+        account_list = list(self.accounts.items())
+        selected = 0
+        
+        while True:
+            os.system('clear' if os.name == 'posix' else 'cls')
+            
+            print(f"\n{Colors.BOLD}Clone: {repo_path}{Colors.END}")
+            print("━" * 60)
+            print(f"{Colors.BOLD}Select account to clone with:{Colors.END}\n")
+            
+            for i, (name, account) in enumerate(account_list):
+                is_selected = (i == selected)
+                
+                if is_selected:
+                    prefix = f"  {Colors.CYAN}●{Colors.END}"
+                    line = f"{prefix} {Colors.BOLD}{Colors.CYAN}{name:<15}{Colors.END} {account['email']}"
+                    clone_url = f"       {Colors.YELLOW}git@{account['host']}:{repo_path}.git{Colors.END}"
+                else:
+                    prefix = "   "
+                    line = f"{prefix} {name:<15} {account['email']}"
+                    clone_url = f"       git@{account['host']}:{repo_path}.git"
+                
+                print(line)
+                print(clone_url)
+                print()
+            
+            print("━" * 60)
+            print(f"\n{Colors.YELLOW}↑/↓{Colors.END} Navigate  {Colors.YELLOW}Enter{Colors.END} Clone  {Colors.YELLOW}q{Colors.END} Cancel")
+            
+            # Get keypress
+            key = self.get_key()
+            
+            if key == 'UP':
+                selected = (selected - 1) % len(account_list)
+            elif key == 'DOWN':
+                selected = (selected + 1) % len(account_list)
+            elif key == '\r' or key == '\n':  # Enter
+                account_name, account = account_list[selected]
+                os.system('clear' if os.name == 'posix' else 'cls')
+                
+                # Build the clone URL
+                clone_url = f"git@{account['host']}:{repo_path}.git"
+                
+                print(f"\n{Colors.BOLD}Cloning with {account_name}:{Colors.END}")
+                print(f"  URL: {clone_url}")
+                print()
+                
+                # Execute git clone
+                result = subprocess.run(['git', 'clone', clone_url])
+                
+                if result.returncode == 0:
+                    print(f"\n{Colors.GREEN}✓ Clone successful!{Colors.END}")
+                    
+                    # Ask if user wants to cd into the repo
+                    repo_name = repo_path.split('/')[-1]
+                    print(f"\n{Colors.CYAN}Tip: cd {repo_name}{Colors.END}")
+                else:
+                    print(f"\n{Colors.RED}✗ Clone failed{Colors.END}")
+                
+                break
+            elif key == 'q' or key == '\x03':  # q or Ctrl+C
+                os.system('clear' if os.name == 'posix' else 'cls')
+                print(f"{Colors.YELLOW}Cancelled{Colors.END}")
+                break
+
     def _setup_ssh_config(self, ssh_host: str, key_path: Path, account_name: str):
         """Add entry to SSH config"""
         ssh_config_path = Path.home() / '.ssh' / 'config'
@@ -1317,11 +1421,16 @@ def main():
     elif command == 'list' or command == 'ls' or command == 'l':
         manager.list_accounts()
     elif command == 'clone' or command == 'c':
-        # Show clone info
         if len(sys.argv) >= 3:
-            manager.show_clone_info(sys.argv[2])
+        # Repo URL provided - interactive clone
+            if sys.argv[2].startswith(('git@', 'https://', 'github.com:')) or '/' in sys.argv[2]:
+                manager.interactive_clone(sys.argv[2])
+            else:
+                # Account name provided - show clone info for that account
+                manager.show_clone_info(sys.argv[2])
         else:
-            manager.show_clone_info()
+            # No args - show clone info for all accounts
+           manager.show_clone_info()
     elif command == 'add' or command == 'a':
         manager.add_account()
     elif command == 'edit' or command == 'e':
@@ -1359,12 +1468,15 @@ def main():
   gitman switch <account>  Switch to account by name
   gitman list              List all accounts
   gitman add               Add new account
+  gitman edit              edit account info
   gitman remove            Remove account (arrow key selection)
   gitman remove <account>  Remove specific account
   gitman backup            Show backup information
   gitman restore           Restore from backup
   gitman clone             Show clone URLs for all accounts
   gitman clone <account>   Show clone URL for specific account
+  gitman clone <repo-url>  Clone repo with account selection  # NEW!
+
 
 {Colors.BOLD}Aliases:{Colors.END}
   who = status
@@ -1400,6 +1512,9 @@ def main():
   gitman add               # Add another account
   gitman backup            # Show backup info
   gitman restore           # Restore from backup
+  gitman clone git@github.com:user/repo.git       # Interactive clone  # NEW!
+  gitman clone https://github.com/user/repo.git   # Interactive clone  # NEW!
+  gitman clone user/repo
         """)
     
     else:
